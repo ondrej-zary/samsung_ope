@@ -1,6 +1,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
@@ -35,38 +36,72 @@ void read_bytes(int fd, unsigned char *buf, int count) {
 	}
 }
 
-void set_leds(unsigned char b1, unsigned char b2) {
+void set_leds(int model, unsigned char b1, unsigned char b2) {
 	mvprintw(5, 0, "LED bytes: %02hhx %02hhx", b1, b2);
 	attron(A_BOLD);
 
-	attron(COLOR_PAIR((b2 & 0x01) == 0 ? PAIR_BLUE : PAIR_OFF));
-	mvprintw(4, 0, "STANDBY ");
+	switch (model) {
+	case 1:
+		attron(COLOR_PAIR((b2 & 0x01) == 0 ? PAIR_BLUE : PAIR_OFF));
+		mvprintw(4, 0, "STANDBY ");
 
-	/* there are two (dual-color) STATUS LEDs - marked LED4 LEFT and LED5 RIGHT */
-	if ((b1 & 0x06) == 0)
-		attron(COLOR_PAIR(PAIR_YELLOW));
-	else if ((b1 & 0x02) == 0)
-		attron(COLOR_PAIR(PAIR_GREEN));
-	else if ((b1 & 0x04) == 0)
-		attron(COLOR_PAIR(PAIR_RED));
-	else
-		attron(COLOR_PAIR(PAIR_OFF));
-	printw("STA");
-	if ((b1 & 0x18) == 0)
-		attron(COLOR_PAIR(PAIR_YELLOW));
-	else if ((b1 & 0x08) == 0)
-		attron(COLOR_PAIR(PAIR_GREEN));
-	else if ((b1 & 0x10) == 0)
-		attron(COLOR_PAIR(PAIR_RED));
-	else
-		attron(COLOR_PAIR(PAIR_OFF));
-	printw("TUS ");
+		/* there are two (dual-color) STATUS LEDs - marked LED4 LEFT and LED5 RIGHT */
+		if ((b1 & 0x06) == 0)
+			attron(COLOR_PAIR(PAIR_YELLOW));
+		else if ((b1 & 0x02) == 0)
+			attron(COLOR_PAIR(PAIR_GREEN));
+		else if ((b1 & 0x04) == 0)
+			attron(COLOR_PAIR(PAIR_RED));
+		else
+			attron(COLOR_PAIR(PAIR_OFF));
+		printw("STA");
+		if ((b1 & 0x18) == 0)
+			attron(COLOR_PAIR(PAIR_YELLOW));
+		else if ((b1 & 0x08) == 0)
+			attron(COLOR_PAIR(PAIR_GREEN));
+		else if ((b1 & 0x10) == 0)
+			attron(COLOR_PAIR(PAIR_RED));
+		else
+			attron(COLOR_PAIR(PAIR_OFF));
+		printw("TUS ");
 
-	attron(COLOR_PAIR((b1 & 0x20) == 0 ? PAIR_GREEN : PAIR_OFF));
-	printw("ECO ");
+		attron(COLOR_PAIR((b1 & 0x20) == 0 ? PAIR_GREEN : PAIR_OFF));
+		printw("ECO ");
 
-	attron(COLOR_PAIR((b1 & 0x40) == 0 ? PAIR_BLUE : PAIR_OFF));
-	printw("WPS ");
+		attron(COLOR_PAIR((b1 & 0x40) == 0 ? PAIR_BLUE : PAIR_OFF));
+		printw("WPS ");
+		break;
+	case 2:
+		attron(COLOR_PAIR((b2 & 0x08) == 0 ? PAIR_BLUE : PAIR_OFF));
+		mvprintw(4, 0, "STANDBY ");
+
+		/* also probably two (dual-color) STATUS LEDs */
+		if ((b1 & 0x06) == 0)
+			attron(COLOR_PAIR(PAIR_YELLOW));
+		else if ((b1 & 0x02) == 0)
+			attron(COLOR_PAIR(PAIR_GREEN));
+		else if ((b1 & 0x04) == 0)
+			attron(COLOR_PAIR(PAIR_RED));
+		else
+			attron(COLOR_PAIR(PAIR_OFF));
+		printw("STA");
+		if ((b1 & 0x60) == 0)
+			attron(COLOR_PAIR(PAIR_YELLOW));
+		else if ((b1 & 0x20) == 0)
+			attron(COLOR_PAIR(PAIR_GREEN));
+		else if ((b1 & 0x40) == 0)
+			attron(COLOR_PAIR(PAIR_RED));
+		else
+			attron(COLOR_PAIR(PAIR_OFF));
+		printw("TUS ");
+
+		attron(COLOR_PAIR((b1 & 0x10) == 0 ? PAIR_GREEN : PAIR_OFF));
+		printw("ECO ");
+
+		attron(COLOR_PAIR((b1 & 0x08) == 0 ? PAIR_BLUE : PAIR_OFF));
+		printw("WPS ");
+		break;
+	}
 }
 
 unsigned char checksum(unsigned char *buf, int len) {
@@ -81,20 +116,26 @@ unsigned char checksum(unsigned char *buf, int len) {
 
 void usage() {
 	printf("Samsung printer operator panel emulator\n");
-	printf("Copyright (c) 2018 Ondrej Zary\n\n");
-	printf("Usage: samsung_ope <device>\n");
-	printf("  e.g. samsung_ope /dev/ttyS1\n\n");
+	printf("Copyright (c) 2020 Ondrej Zary\n\n");
+	printf("Usage: samsung_ope <device> <model>\n");
+	printf("  e.g. samsung_ope /dev/ttyS1 1\n\n");
+	printf("Model: 1=ML-3310ND (default), 2=SL-M3820ND\n");
 }
 
 int main(int argc, char *argv[]) {
 	unsigned char buf[258]; /* 3 bytes (header) + max. 255 data bytes */
 	struct termios options;
 	bool key_pressed = false;
+	int model;
 
 	if (argc < 2) {
 		usage();
 		return 1;
 	}
+
+	model = argc > 2 ? atoi(argv[2]) : 1;
+	if (model != 2)
+		model = 1;
 
 	int fd = open(argv[1], O_RDWR | O_NOCTTY);
 	if (fd < 0) {
@@ -181,10 +222,10 @@ int main(int argc, char *argv[]) {
 					wrefresh(lcd_win);
 					break;
 				case CMD_LED:
-					set_leds(buf[3], buf[4]);
+					set_leds(model, buf[3], buf[4]);
 					break;
 				case CMD_RST:
-					set_leds(0, 0);
+					set_leds(model, 0, 0);
 					break;
 				}
 			}
@@ -193,15 +234,34 @@ int main(int argc, char *argv[]) {
 			write_byte(fd, 0xaf);	/* key release */
 			key_pressed = false;
 		} else {
-			switch (getch()) {
-			case '\n':	write_byte(fd, 'u'); key_pressed = true; break; /* OK */
-			case KEY_LEFT:	write_byte(fd, 'G'); key_pressed = true; break; /* < */
-			case KEY_RIGHT:	write_byte(fd, 'H'); key_pressed = true; break; /* > */
-			case KEY_UP:	write_byte(fd, 'E'); key_pressed = true; break; /* MENU */
-			case KEY_DOWN:	write_byte(fd, 'F'); key_pressed = true; break; /* BACK */
-			case 'x':	write_byte(fd, 'x'); key_pressed = true; break; /* CANCEL */
-			case 'e':	write_byte(fd, 'U'); key_pressed = true; break; /* ECO */
-			case 'w':	write_byte(fd, 'V'); key_pressed = true; break; /* WPS */
+			int c;
+			switch (c = getch()) {
+			case KEY_UP:	write_byte(fd, 0x45); key_pressed = true; break; /* MENU */
+			case KEY_DOWN:	write_byte(fd, 0x46); key_pressed = true; break; /* BACK */
+			case KEY_LEFT:	write_byte(fd, 0x47); key_pressed = true; break; /* < */
+			case KEY_RIGHT:	write_byte(fd, 0x48); key_pressed = true; break; /* > */
+
+			case '\n':	write_byte(fd, 0x75); key_pressed = true; break; /* OK */
+			case 'x':	write_byte(fd, model == 2 ? 0x76 : 0x78); key_pressed = true; break; /* CANCEL */
+
+			case 'e':	write_byte(fd, 0x55); key_pressed = true; break; /* ECO */
+			case 'w':	write_byte(fd, 0x56); key_pressed = true; break; /* WPS */
+
+			case '1':	write_byte(fd, 0x15); key_pressed = true; break; /* 1 */
+			case '2':	write_byte(fd, 0x25); key_pressed = true; break; /* 2 */
+			case '3':	write_byte(fd, 0x35); key_pressed = true; break; /* 3 */
+
+			case '4':	write_byte(fd, 0x16); key_pressed = true; break; /* 4 */
+			case '5':	write_byte(fd, 0x26); key_pressed = true; break; /* 5 */
+			case '6':	write_byte(fd, 0x36); key_pressed = true; break; /* 6 */
+
+			case '7':	write_byte(fd, 0x17); key_pressed = true; break; /* 7 */
+			case '8':	write_byte(fd, 0x27); key_pressed = true; break; /* 8 */
+			case '9':	write_byte(fd, 0x37); key_pressed = true; break; /* 9 */
+
+			case '*':	write_byte(fd, 0x18); key_pressed = true; break; /* * */
+			case '0':	write_byte(fd, 0x28); key_pressed = true; break; /* 0 */
+			case '#':	write_byte(fd, 0x38); key_pressed = true; break; /* # */
 			}
 		}
 		write_byte(fd, ACK);
